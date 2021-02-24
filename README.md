@@ -109,13 +109,13 @@ API operations are added to the service interface along with the authenticators.
 
 ```go
 type ExampleService interface {
-	// Authenticator Handlers
-	APIKeyAuthenticate(*gin.Context, string, []string) (interface{}, error, int)
-	Oauth2Authenticate(*gin.Context, string, []string) (interface{}, error, int)
+  // Authenticator Handlers
+  APIKeyAuthenticate(*gin.Context, string, []string) (interface{}, error, int)
+  Oauth2Authenticate(*gin.Context, string, []string) (interface{}, error, int)
 
-	// API Operation Handlers
-	AddPet(ctx *gin.Context, params *pet.AddPetParams) api.APIResponse
-	GetPetByID(ctx *gin.Context, params *pet.GetPetByIDParams) api.APIResponse
+  // API Operation Handlers
+  AddPet(ctx *gin.Context, params *pet.AddPetParams) api.APIResponse
+  GetPetByID(ctx *gin.Context, params *pet.GetPetByIDParams) api.APIResponse
 ```
 
 ## Cors
