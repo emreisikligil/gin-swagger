@@ -1,0 +1,66 @@
+# Created by https://www.gitignore.io
+
+### Go ###
+# Compiled Object files, Static and Dynamic libs (Shared Objects)
+*.o
+*.a
+*.so
+*.d
+
+# Folders
+_obj
+_test
+
+# Architecture specific extensions/prefixes
+*.[568vq]
+[568vq].out
+
+*.cgo1.go
+*.cgo2.c
+_cgo_defun.c
+_cgo_gotypes.go
+_cgo_export.*
+
+_testmain.go
+
+*.exe
+*.test
+*.prof
+
+# Output of the go coverage tool, specifically when used with LiteIDE
+*.out
+
+# Project-local glide cache, RE: https://github.com/Masterminds/glide/issues/736
+.glide/
+
+### Other ###
+.env
+.envrc
+.DS_Store
+*.sublime-workspace
+*.iml
+.idea
+tmp
+
+gin-bin
+*.coverprofile
+*.coverprofile.*
+.divshot-cache
+
+bin/scratch.sh
+scratch.sql
+
+# Build
+bin/application
+
+# Elastic Beanstalk Files
+.elasticbeanstalk/*
+!.elasticbeanstalk/*.cfg.yml
+!.elasticbeanstalk/*.global.yml
+
+vendor
+*.log
+*.yml
+
+models/
+restapi/

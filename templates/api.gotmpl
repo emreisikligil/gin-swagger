@@ -1,0 +1,257 @@
+{{/* 
+Copyright © 2020 mikkeloscar <https://github.com/mikkeloscar>
+Copyright © 2021 Emre Isikligil <emreisikligil@gmail.com>
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License. */}}
+
+package {{.APIPackage}}
+
+import (
+"net/http"
+"strconv"
+
+"github.com/gin-contrib/cors"
+"github.com/gin-gonic/gin"
+"github.com/emreisikligil/gin-swagger/api"
+{{ range .DefaultImports }}{{ printf "%q" .}}
+{{ end }}
+{{range $key, $value := .Imports -}}
+	{{$key}} {{printf "%q" $value}}
+{{end -}}
+)
+
+const (
+PrincipalKey = "Principal"
+InHeader = "header"
+InQuery = "query"
+)
+
+type {{pascalize .Name}}Server struct {
+Router *{{pascalize .Name}}Router
+Service {{pascalize .Name}}Service
+Config *{{pascalize .Name}}Config
+{{range .SecurityDefinitions -}}
+	{{pascalize .ID}}Authenticator MiddlewareAuthenticator
+{{end}}
+}
+
+func New{{pascalize .Name}}Server(service {{pascalize .Name}}Service, config *{{pascalize .Name}}Config, mwList []gin.HandlerFunc) *{{pascalize .Name}}Server {
+// Create new {{pascalize .Name}}Router
+router := &{{pascalize .Name}}Router {
+Engine: gin.New(),
+}
+{{range .SecurityDefinitions}}
+	// Create {{.ID}}Authenticator
+	{{if and .IsOAuth2 (eq .Flow "application") -}}
+		{{.ID}}Authenticator := &BearerAuthenticator {
+		Handler: service.{{pascalize .ID}}Authenticate,
+		TokenURL: "{{.TokenURL}}",
+		}
+	{{- end}}
+	{{- if .IsAPIKeyAuth -}}
+		{{.ID}}Authenticator := &APIKeyAuthenticator {
+		Handler: service.{{pascalize .ID}}Authenticate,
+		In: "{{.In}}",
+		Name: "{{.Name}}",
+		}
+	{{end}}
+{{- end}}
+
+server := &{{pascalize .Name}}Server{
+Router: router,
+Service: service,
+Config: config,
+{{range .SecurityDefinitions}}{{pascalize .ID}}Authenticator: {{.ID}}Authenticator,
+{{end}}
+}
+
+// Initialize API routers for the server
+server.initRouter(mwList)
+
+return server
+}
+
+// {{pascalize .Name}}Router defines all the routes of the {{pascalize .Name}}.
+type {{pascalize .Name}}Router struct {
+*gin.Engine
+{{if .BasePath -}}
+	BaseGroup *gin.RouterGroup
+{{end -}}
+{{range .Operations -}}
+	{{pascalize .Name}} *gin.RouterGroup
+{{end}}
+}
+
+// Creates a new router for {{pascalize .Name}}
+func (server *{{pascalize .Name}}Server) initRouter(mwList []gin.HandlerFunc) {
+server.Router.Use(gin.Recovery())
+config := cors.DefaultConfig()
+config.AllowHeaders = append(config.AllowHeaders, "Authorization")
+config.AllowAllOrigins = true
+server.Router.Use(cors.New(config))
+for _, mw := range mwList {
+server.Router.Use(mw)
+}
+
+// Health check endpoint
+server.Router.GET("/health", HealthCheck())
+
+{{$basePath := .BasePath}}
+{{if $basePath -}}
+	// Create the base group for the base path
+	server.Router.BaseGroup = server.Router.Group("{{.BasePath}}")
+{{end}}
+
+{{range .Operations}}
+	// Initialize API handler for {{pascalize .Name}}
+	server.Router.{{pascalize .Name}} = server.Router{{if $basePath -}}.BaseGroup{{- end}}.Group(ginizePath("{{.Path}}"))
+	{{if .Authorized}}{{$operationName := pascalize .Name}}{{$secLen := len .Security}}{{range $ind, $sec := .Security}}{{range $sec -}}
+		server.Router.{{$operationName}}.Use(server.{{pascalize .Name}}Authenticator.AuthMiddleware([]string{
+			{{- range $i, $v := .Scopes}}{{if not (eq $i 0)}}, {{end}}"{{$v}}"{{end -}}
+			},
+			{{- if eq (add $ind 1) $secLen}}true{{else}}false{{end -}}
+		))
+	{{end}}{{end}}{{end -}}
+	server.Router.{{pascalize .Name}}.{{upper .Method}}("", {{.Package}}.New{{pascalize .Name}}APIHandler(server.Service.{{pascalize .Name}}))
+	{{end}}
+}
+
+
+// {{pascalize .Name}}Service is the interface that must be implemented in order to provide
+// business logic for the Server service.
+type {{pascalize .Name}}Service interface {
+{{if .SecurityDefinitions -}}
+	// Authenticator Handlers
+{{end -}}
+{{range .SecurityDefinitions}}
+	{{- if and .IsOAuth2 (eq .Flow "application") -}}
+		{{pascalize .ID}}Authenticate(*gin.Context, string, []string) (interface{}, error, int)
+	{{- end}}
+	{{- if .IsAPIKeyAuth -}}
+		{{pascalize .ID}}Authenticate(*gin.Context, string, []string) (interface{}, error, int)
+	{{- end}}
+{{end}}
+{{if .Operations}}
+	// API Operation Handlers
+{{end -}}
+{{range .Operations -}}
+	{{pascalize .Name}}(ctx *gin.Context{{if .Params}}, params *{{.Package}}.{{pascalize .Name}}Params{{end}}) api.APIResponse
+{{end}}
+}
+
+type APIResponse struct {
+Code int
+Body interface{}
+}
+
+// {{pascalize .Name}}Config keeps the server configuration
+type {{pascalize .Name}}Config struct {
+Port int
+Host string
+Version string
+}
+
+func HealthCheck() gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		ctx.JSON(200, gin.H{
+			"status": "UP",
+		})
+	}
+}
+
+type MiddlewareAuthenticator interface {
+AuthMiddleware(requiredScopes []string, lastAuthenticator bool) gin.HandlerFunc
+}
+
+type BearerAuthenticatorHandler func(*gin.Context, string, []string) (interface{}, error, int)
+
+type BearerAuthenticator struct {
+Handler BearerAuthenticatorHandler
+TokenURL string
+}
+
+func (authenticator *BearerAuthenticator) AuthMiddleware(requiredScopes []string, lastAuthenticator bool) gin.HandlerFunc {
+return func(ctx *gin.Context) {
+if _, exist := ctx.Get(PrincipalKey); exist {
+return
+}
+
+token := ctx.GetHeader("Authorization")
+if token == "" {
+if lastAuthenticator {
+ctx.AbortWithStatus(http.StatusUnauthorized)
+}
+return
+}
+
+principal, err, code := authenticator.Handler(ctx, token, requiredScopes)
+if err != nil {
+ctx.AbortWithStatusJSON(code, err)
+return
+}
+
+ctx.Set(PrincipalKey, principal)
+}
+}
+
+type APIKeyAuthenticatorHandler func(*gin.Context, string, []string) (interface{}, error, int)
+
+type APIKeyAuthenticator struct {
+Handler APIKeyAuthenticatorHandler
+In string
+Name string
+}
+
+func (authenticator *APIKeyAuthenticator) AuthMiddleware(requiredScopes []string, lastAuthenticator bool) gin.HandlerFunc {
+return func(ctx *gin.Context) {
+if _, exist := ctx.Get(PrincipalKey); exist {
+return
+}
+
+apiKey := ""
+switch authenticator.In {
+case InHeader:
+apiKey = ctx.Request.Header.Get(authenticator.Name)
+case InQuery:
+apiKey = ctx.Request.URL.Query().Get(authenticator.Name)
+}
+if apiKey == "" {
+if lastAuthenticator {
+ctx.AbortWithStatus(http.StatusUnauthorized)
+}
+return
+}
+
+principal, err, code := authenticator.Handler(ctx, apiKey, requiredScopes)
+if err != nil {
+ctx.AbortWithStatusJSON(code, err)
+return
+}
+
+ctx.Set(PrincipalKey, principal)
+}
+}
+
+// Runs the server
+func (server {{pascalize .Name}}Server) Run() error {
+err := server.Router.Run(server.Config.Host + ":" + strconv.Itoa(server.Config.Port))
+if err != nil {
+return err
+}
+
+return nil
+}
+
+func ginizePath(path string) string {
+return strings.Replace(strings.Replace(path, "{", ":", -1), "}", "", -1)
+}
